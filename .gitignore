@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Transmint
+backend/data/
+*.db
+.DS_Store

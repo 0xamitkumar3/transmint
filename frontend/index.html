@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transmint</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Transmint</h1>
+    <p class="tagline">Transcribe meetings &amp; lectures, then summarize them.</p>
+    <p id="backend-status" class="status-line">Checking backend…</p>
+  </header>
+
+  <main>
+    <div id="error" class="error" role="alert" hidden></div>
+
+    <!-- 1. Choose input & transcribe -->
+    <section class="card">
+      <h2>1. Choose input</h2>
+      <div class="tabs" role="radiogroup" aria-label="Input type">
+        <label><input type="radio" name="source" value="file" checked> Audio file</label>
+        <label><input type="radio" name="source" value="youtube"> YouTube link</label>
+      </div>
+
+      <div id="file-panel">
+        <label id="drop-zone" class="drop-zone" for="file-input">
+          <span>Drag an audio file here, or</span>
+          <span class="button secondary">Choose file</span>
+          <input id="file-input" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.webm,audio/*">
+        </label>
+        <p class="muted">Selected: <span id="file-name">none</span></p>
+      </div>
+
+      <div id="youtube-panel" hidden>
+        <label class="field">YouTube video URL
+          <input id="youtube-url" type="url" maxlength="2048" placeholder="https://www.youtube.com/watch?v=...">
+        </label>
+        <label class="checkbox">
+          <input id="prefer-captions" type="checkbox" checked>
+          Use the video's captions when available (faster); otherwise download audio and transcribe with Whisper
+        </label>
+      </div>
+
+      <button id="transcribe-btn" type="button" disabled>Transcribe</button>
+      <p id="transcribe-progress" class="progress" hidden>
+        <span class="spinner" aria-hidden="true"></span><span id="transcribe-progress-text">Uploading…</span>
+      </p>
+    </section>
+
+    <!-- 2. Transcript -->
+    <section class="card">
+      <h2>2. Transcript</h2>
+      <p id="transcript-meta" class="muted">No transcript yet.</p>
+      <div id="transcript-text" class="text-box" aria-live="polite"></div>
+      <details id="segments-details" hidden>
+        <summary>Timestamped segments</summary>
+        <ol id="segments-list" class="segments"></ol>
+      </details>
+      <div class="actions">
+        <button type="button" class="secondary" data-download="transcript" data-format="txt" disabled>Download TXT</button>
+        <button type="button" class="secondary" data-download="transcript" data-format="md" disabled>Download Markdown</button>
+      </div>
+    </section>
+
+    <!-- 3. Summary -->
+    <section class="card">
+      <h2>3. Summary</h2>
+      <div class="row">
+        <label>Type
+          <select id="summary-type">
+            <option value="brief">Brief</option>
+            <option value="detailed">Detailed</option>
+            <option value="meeting_notes">Meeting Notes</option>
+          </select>
+        </label>
+        <label>Output language (optional)
+          <input id="output-language" type="text" maxlength="40" placeholder="e.g. English">
+        </label>
+      </div>
+      <button id="summarize-btn" type="button" disabled>Summarize</button>
+      <p id="summarize-progress" class="progress" hidden>
+        <span class="spinner" aria-hidden="true"></span><span>Generating summary…</span>
+      </p>
+      <div id="summary-output" class="summary"></div>
+      <div class="actions">
+        <button type="button" class="secondary" data-download="summary" data-format="md" disabled>Download Markdown</button>
+        <button type="button" class="secondary" data-download="summary" data-format="txt" disabled>Download TXT</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
