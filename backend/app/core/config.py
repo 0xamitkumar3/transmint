@@ -27,9 +27,6 @@ class Settings(BaseSettings):
     app_version: str = "0.1.0"
     log_level: str = "INFO"
 
-    # Comma-separated list of allowed browser origins (no wildcards in production).
-    cors_origins: str = "http://127.0.0.1:5500,http://localhost:5500"
-
     # --- Storage -----------------------------------------------------------
     database_path: Path = Path("data/transmint.db")
     upload_dir: Path = Path("data/uploads")
@@ -100,10 +97,6 @@ class Settings(BaseSettings):
     @property
     def ytdlp_js_runtime_list(self) -> list[str]:
         return [r.strip().lower() for r in self.ytdlp_js_runtimes.split(",") if r.strip()]
-
-    @property
-    def cors_origin_list(self) -> list[str]:
-        return [o.strip().rstrip("/") for o in self.cors_origins.split(",") if o.strip()]
 
     @property
     def allowed_extension_set(self) -> frozenset[str]:

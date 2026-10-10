@@ -199,7 +199,7 @@ pytest
 | --- | --- |
 | `Address already in use` / port 8000 busy | Another program uses the port. Find it with `lsof -nP -iTCP:8000 -sTCP:LISTEN` and stop it, **or** start the backend on another port (`--port 8001`) and open the page as `http://127.0.0.1:5500/?api=http://127.0.0.1:8001`. |
 | Browser shows **"Error response 404 – File not found"** on port 5500 | The frontend server was started in the wrong folder. Stop it and run `python3 -m http.server 5500` **inside `frontend/`**. |
-| Page says **"Cannot reach the backend…"** | The backend isn't running, runs on a different port (use `?api=`), or the page's address isn't in `CORS_ORIGINS`. Use `http://127.0.0.1:5500` or `http://localhost:5500`, not `file://` or `[::]`. |
+| Page says **"Cannot reach the backend…"** | The backend isn't running, runs on a different port (use `?api=`), or the page's address isn't in `ALLOWED_ORIGINS` in `backend/app/main.py`. Use `http://127.0.0.1:5500` or `http://localhost:5500`, not `file://` or `[::]`. |
 | **"summarization not configured (set GROQ_API_KEY)"** although the key is set | The backend was started before the key was added. Restart it. Also check that the key is in `backend/.env`, not in the project root. |
 | **"Groq model '…' is not available"** | Groq retired that model. Set `GROQ_MODEL` in `backend/.env` to a current one from <https://console.groq.com/docs/models> (default: `openai/gpt-oss-120b`) and restart. |
 | **"Groq rate limit reached"** (429) | The free-tier limit was hit. Wait a minute and try again. |
@@ -230,13 +230,12 @@ All settings are environment variables, read from `backend/.env`. See [`backend/
 | `MAX_CONCURRENT_TRANSCRIPTIONS` | `1` | Worker threads for transcription |
 | `SUMMARY_CHUNK_CHARS` | `12000` | Chunk size for hierarchical summarization |
 | `MAX_TRANSCRIPT_CHARS` | `400000` | Longest transcript accepted for summarization |
-| `CORS_ORIGINS` | `http://127.0.0.1:5500,http://localhost:5500` | Comma-separated allowed browser origins |
 | `RATE_LIMIT_PER_MINUTE` | `20` | Per-IP limit on uploads and summaries (`0` disables) |
 | `DATABASE_PATH` / `UPLOAD_DIR` | `data/transmint.db` / `data/uploads` | Relative to `backend/` |
 
 Never commit `backend/.env`; it is git-ignored.
 
-The frontend's backend URL is `DEFAULT_API_BASE_URL` at the top of [`frontend/script.js`](frontend/script.js) (default `http://127.0.0.1:8000`). You can also override it per visit with `?api=http://host:port`. If you serve the frontend from another address, add that origin to `CORS_ORIGINS`.
+The frontend's backend URL is `DEFAULT_API_BASE_URL` at the top of [`frontend/script.js`](frontend/script.js) (default `http://127.0.0.1:8000`). You can also override it per visit with `?api=http://host:port`. If you serve the frontend from another address, add that origin to `ALLOWED_ORIGINS` in [`backend/app/main.py`](backend/app/main.py).
 
 ## API reference
 

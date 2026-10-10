@@ -25,6 +25,12 @@ logger = logging.getLogger("transmint")
 # Allowance for multipart boundaries/headers on top of the raw file size.
 MULTIPART_OVERHEAD_BYTES = 64 * 1024
 
+# Browser origins allowed to call the API. Add the deployed frontend's URL here (no trailing slash).
+ALLOWED_ORIGINS = [
+    "http://127.0.0.1:5500",
+    "http://localhost:5500",
+]
+
 
 def create_app(settings: Settings | None = None, services: Services | None = None) -> FastAPI:
     """Build the application. Tests pass `services` with fake AI backends."""
@@ -66,7 +72,7 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
     # Added last so it is the outermost middleware and also decorates early 413 responses.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origin_list,
+        allow_origins=ALLOWED_ORIGINS,
         allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS"],
         allow_headers=["Content-Type", "Accept"],

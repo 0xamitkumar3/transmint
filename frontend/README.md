@@ -18,7 +18,7 @@ Open <http://127.0.0.1:5500>. Don't open `index.html` directly via `file://`, be
 - Edit `DEFAULT_API_BASE_URL` at the top of `script.js` (default `http://127.0.0.1:8000`), **or**
 - append `?api=` to the page URL, e.g. `http://127.0.0.1:5500/?api=http://127.0.0.1:8001`.
 
-The page's origin (e.g. `http://127.0.0.1:5500`) must be listed in the backend's `CORS_ORIGINS`.
+The page's origin (e.g. `http://127.0.0.1:5500`) must be listed in `ALLOWED_ORIGINS` in `backend/app/main.py`.
 
 ## What it does
 
