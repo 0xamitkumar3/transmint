@@ -24,7 +24,7 @@ pytest
 
 ```text
 app/
-├── main.py                    # app factory, CORS, error handlers, upload-size guard, lifespan
+├── main.py                    # app factory, CORS (ALLOWED_ORIGINS), error handlers, upload-size guard, lifespan
 ├── core/
 │   ├── config.py              # pydantic-settings (env / .env)
 │   ├── errors.py              # domain exceptions → HTTP status codes
@@ -37,7 +37,7 @@ app/
 │   ├── audio_service.py       # streaming save, signature check, PyAV/ffprobe probe, ffmpeg convert, cleanup
 │   ├── transcription_service.py  # WhisperTranscriber + background TranscriptionJobRunner
 │   ├── summarization_service.py  # GroqClient, chunking, hierarchical merge, validation/repair
-│   ├── youtube_service.py     # YouTube captions (youtube-transcript-api) + audio download (yt-dlp)
+│   ├── youtube_service.py     # YouTube captions (Supadata or youtube-transcript-api) + audio download (yt-dlp)
 │   ├── prompts.py             # reusable summarization prompts
 │   └── export_service.py      # TXT / Markdown rendering
 ├── db/

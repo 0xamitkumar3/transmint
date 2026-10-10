@@ -5,8 +5,8 @@
  * You can also override it without editing this file by opening the page with
  * ?api=http://host:port (handy when the default port is busy).
  */
-const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";   // for local
-// const DEFAULT_API_BASE_URL = "https://transmint.onrender.com";   // for production
+// const DEFAULT_API_BASE_URL = "http://127.0.0.1:8000";   // for local
+const DEFAULT_API_BASE_URL = "https://transmint.onrender.com";   // for production
 
 const API_BASE_URL = (new URLSearchParams(location.search).get("api") || DEFAULT_API_BASE_URL).replace(/\/+$/, "");
 

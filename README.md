@@ -2,7 +2,7 @@
 
 **Transmint** turns meeting recordings, lectures and **YouTube videos** into transcripts and structured summaries.
 
-- **Input** is an audio file upload **or a YouTube link**. For YouTube, Transmint uses the video's own captions when they exist, and otherwise downloads just the audio and transcribes it. No YouTube API key is needed.
+- **Input** is an audio file upload **or a YouTube link**. For YouTube, Transmint uses the video's own captions when they exist, and otherwise downloads just the audio and transcribes it. No YouTube API key is needed. On cloud hosts where YouTube blocks the server, captions can be fetched through the optional [Supadata](https://supadata.ai) API.
 - **Transcription** runs locally with [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (no audio leaves your machine).
 - **Summarization** uses the [Groq](https://console.groq.com) API to produce validated, structured summaries: an overview, key points, concepts, decisions, suggestions, action items, follow-up questions and unclear parts.
 
@@ -18,6 +18,7 @@ The project has two independent parts:
 ## Features
 
 - Paste a YouTube link (`watch`, `youtu.be`, `shorts`, `live`, `embed`). Captions are tried first because they are instant and often more accurate; videos without captions fall back to audio download plus Whisper. The video title and duration are recorded.
+- Optional [Supadata](https://supadata.ai) integration (`SUPADATA_API_KEY`): captions are fetched from Supadata's servers, so YouTube links work on cloud hosts such as Render, where YouTube blocks the server's IP with a bot check.
 - Upload WAV, MP3, M4A, FLAC, OGG or WebM audio (checked by extension, file signature and a real decode probe, with a size limit).
 - Background transcription jobs (`queued → processing → completed | failed`) with a status endpoint for polling.
 - Transcript with detected language, duration and timestamped segments.
@@ -37,7 +38,7 @@ flowchart LR
     end
     subgraph Backend["backend/ (FastAPI)"]
         R[API routes<br/>health · transcriptions · summaries]
-        YT[YouTubeService<br/>captions · yt-dlp audio]
+        YT[YouTubeService<br/>Supadata · captions · yt-dlp audio]
         AS[AudioService<br/>save · validate · probe · convert]
         JR[TranscriptionJobRunner<br/>thread pool]
         TS[WhisperTranscriber<br/>faster-whisper]
@@ -48,6 +49,7 @@ flowchart LR
     end
     GROQ[(Groq API)]
     YOUTUBE[(YouTube)]
+    SUPADATA[(Supadata API<br/>optional)]
 
     FE -- fetch / JSON / multipart --> R
     R --> AS
@@ -55,6 +57,7 @@ flowchart LR
     JR --> AS
     JR --> TS
     JR --> YT --> YOUTUBE
+    YT --> SUPADATA
     JR --> DB
     R --> SS --> GC --> GROQ
     R --> DB
@@ -65,7 +68,7 @@ The request flow:
 
 1. `POST /api/transcriptions` streams the upload to `backend/data/uploads/<uuid>.<ext>`, validates it, creates a `queued` record and returns `202` right away.
 2. A worker thread marks the job `processing`, transcribes it, stores the result (`completed`) or the error (`failed`), and **always deletes the temporary file**.
-   *For a YouTube link* (`POST /api/transcriptions/youtube`), the worker first tries the video's caption track. If there is none, it downloads the audio-only stream into the same temporary folder and transcribes it like an upload.
+   *For a YouTube link* (`POST /api/transcriptions/youtube`), the worker first tries the video's caption track: through Supadata when `SUPADATA_API_KEY` is set (one transcript request per job; long videos are processed as a Supadata job that is polled every 2 seconds for up to 3 minutes), then directly from YouTube. If there is none, it downloads the audio-only stream into the same temporary folder and transcribes it like an upload.
 3. The client polls `GET /api/transcriptions/{id}/status`, then fetches the full record.
 4. `POST /api/summaries` loads the transcript, chunks it if needed, calls Groq, validates the JSON and stores the summary.
 
@@ -76,8 +79,9 @@ All SQL is isolated in `backend/app/db/`, so the storage can move to PostgreSQL 
 - Python 3.11 to 3.13 (tested on 3.12), FastAPI, Uvicorn, Pydantic v2, pydantic-settings
 - faster-whisper 1.2 (CTranslate2), with PyAV for decoding (FFmpeg libraries bundled)
 - Groq Python SDK (default model `openai/gpt-oss-120b`; configurable)
+- yt-dlp and youtube-transcript-api for YouTube, plus httpx for the optional Supadata API
 - SQLite (Python standard library)
-- Pytest and httpx for tests
+- Pytest for tests (httpx's mock transport fakes Supadata)
 - Vanilla HTML, CSS and JavaScript for the frontend
 
 ## Prerequisites
@@ -87,6 +91,7 @@ All SQL is isolated in `backend/app/db/`, so the storage can move to PostgreSQL 
 - **Internet access on the first transcription**, to download the Whisper model from Hugging Face (~145 MB for `base`). After that it is cached.
 - **For YouTube (recommended): [Deno](https://deno.com)** (`brew install deno`). yt-dlp uses a JavaScript runtime to solve YouTube's player challenges; Node.js 22+ or Bun also work. Without one, downloads may still work, but some formats can be missing. Caption fetching doesn't need it.
 - **A Groq API key** for summaries. You can get one free at <https://console.groq.com/keys>. Transcription works without it.
+- **Optional: a Supadata API key** from <https://supadata.ai> (free tier available). Not needed locally; recommended when the backend is deployed to a cloud host. See [Deploying the backend to Render](#deploying-the-backend-to-render).
 
 ## How to run (step by step)
 
@@ -205,6 +210,7 @@ pytest
 | **"Groq rate limit reached"** (429) | The free-tier limit was hit. Wait a minute and try again. |
 | First transcription is slow or fails offline | The Whisper model downloads on first use and needs internet once. |
 | YouTube: **"asking for a sign-in/bot check"** | Export your browser's YouTube cookies to `cookies.txt` and set `YTDLP_COOKIES_FILE=/path/to/cookies.txt` in `backend/.env`, then restart. On cloud hosts (Render etc.), set `SUPADATA_API_KEY` instead so captions are fetched via Supadata. |
+| YouTube still fails with `SUPADATA_API_KEY` set | Check the backend logs for `Supadata returned HTTP …`: `401` means a wrong key, `429` means the credit limit was used up. With `SUPADATA_MODE=native`, videos without captions fall back to the audio download, which a cloud host may still block; use `SUPADATA_MODE=auto` to have Supadata generate a transcript instead. |
 | YouTube downloads fail after a while | YouTube changed something. Run `pip install -U "yt-dlp[default]"` in the backend venv and restart. Installing Deno also helps. |
 | `pip install` fails building packages | You're probably on Python 3.14. Recreate the venv with `python3.12 -m venv .venv`. |
 
@@ -237,7 +243,43 @@ All settings are environment variables, read from `backend/.env`. See [`backend/
 
 Never commit `backend/.env`; it is git-ignored.
 
-The frontend's backend URL is `DEFAULT_API_BASE_URL` at the top of [`frontend/script.js`](frontend/script.js) (default `http://127.0.0.1:8000`). You can also override it per visit with `?api=http://host:port`. If you serve the frontend from another address, add that origin to `ALLOWED_ORIGINS` in [`backend/app/main.py`](backend/app/main.py).
+The frontend's backend URL is `DEFAULT_API_BASE_URL` at the top of [`frontend/script.js`](frontend/script.js) (default `http://127.0.0.1:8000`). You can also override it per visit with `?api=http://host:port`.
+
+**CORS is not an environment variable.** The browser origins allowed to call the API are listed in `ALLOWED_ORIGINS` at the top of [`backend/app/main.py`](backend/app/main.py) (by default `http://127.0.0.1:5500` and `http://localhost:5500`). If you serve the frontend from another address, add that origin there (no trailing slash).
+
+## Deploying the backend to Render
+
+The backend runs as a Render **Web Service** (native Python, no Docker needed). The frontend can stay local or be hosted anywhere static.
+
+1. In Render, create a **New Web Service** from this GitHub repository and fill in:
+
+   | Field | Value |
+   | --- | --- |
+   | Language | Python 3 |
+   | Branch | `main` |
+   | Root Directory | `backend` |
+   | Build Command | `pip install -r requirements.txt` |
+   | Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+   | Health Check Path | `/api/health` |
+
+2. Add the **environment variables**:
+
+   | Key | Value |
+   | --- | --- |
+   | `GROQ_API_KEY` | Your Groq key (required for summaries) |
+   | `SUPADATA_API_KEY` | Your Supadata key (recommended: without it, YouTube blocks most requests from Render with a bot check) |
+   | `PYTHON_VERSION` | `3.12.7` (the pinned packages are tested on 3.12) |
+   | `WHISPER_MODEL_SIZE` | `tiny` on 512 MB plans (Free / Starter), so Whisper doesn't run out of memory |
+
+   Everything else has working defaults.
+
+3. Point the frontend at the deployed backend: set `DEFAULT_API_BASE_URL` in `frontend/script.js` to your Render URL (e.g. `https://transmint.onrender.com`), or open the page with `?api=https://transmint.onrender.com`. If the frontend is hosted somewhere other than `127.0.0.1:5500` / `localhost:5500`, add its origin to `ALLOWED_ORIGINS` in `backend/app/main.py` and push.
+
+Things to know on Render:
+
+- **Free instances sleep** after about 15 minutes idle; the first request afterwards takes up to a minute.
+- **The disk is ephemeral.** The SQLite database and uploads are wiped on every deploy and restart. To keep history, attach a Render Disk (paid plans), e.g. at `/var/data`, and set `DATABASE_PATH=/var/data/transmint.db` and `UPLOAD_DIR=/var/data/uploads`.
+- **YouTube audio downloads are usually blocked** from Render's IPs. With Supadata, videos with captions work; for videos without captions, set `SUPADATA_MODE=auto` (uses more credits) or `YTDLP_COOKIES_FILE`. Audio file uploads always work.
 
 ## API reference
 
@@ -374,14 +416,14 @@ curl -OJ "http://127.0.0.1:8000/api/transcriptions/d7f4aba03a9e4554b2469a1c96186
 
 ## Tests
 
-Run them as shown in [Running the tests](#running-the-tests). The suite fakes both Whisper and Groq, so it needs no network, model download or API key. It covers health and CORS, upload validation (extension, signature, corrupt audio, size limit, empty files), the job lifecycle and temp-file cleanup, failure handling (no fabricated transcripts, no leaked internals), chunking and hierarchical summarization, JSON parsing and repair, the owner/deadline guard, prompt-injection delimiting, Groq error mapping (429/504/401/404/5xx, truncated output), summary API validation and errors, exports and rate limiting.
+Run them as shown in [Running the tests](#running-the-tests). The suite fakes Whisper, Groq and Supadata, so it needs no network, model download or API key. It covers health and CORS, YouTube captions and the Supadata integration (sync and async jobs, error fallbacks), upload validation (extension, signature, corrupt audio, size limit, empty files), the job lifecycle and temp-file cleanup, failure handling (no fabricated transcripts, no leaked internals), chunking and hierarchical summarization, JSON parsing and repair, the owner/deadline guard, prompt-injection delimiting, Groq error mapping (429/504/401/404/5xx, truncated output), summary API validation and errors, exports and rate limiting.
 
 ## Security notes
 
 - Upload size is enforced twice: by `Content-Length` before the body is read, and again while streaming to disk. Content is checked by signature and a decode probe.
 - Uploaded files are saved under server-generated UUID names; the client filename is only stored, sanitized, for display. Temporary files are deleted after every job, and on startup.
 - Export filenames are built from IDs only; there are no filesystem paths in any response.
-- CORS allows only the listed origins and methods (no wildcard).
+- CORS allows only the origins in `ALLOWED_ORIGINS` (`backend/app/main.py`) and the listed methods (no wildcard).
 - Secrets come from environment variables only; the health endpoint exposes booleans, never values.
 - The frontend renders all transcript and summary text with `textContent`, never `innerHTML`.
 - The transcript is wrapped in delimiters and the system prompt tells the model to treat it as data, not instructions.
@@ -393,7 +435,7 @@ Run them as shown in [Running the tests](#running-the-tests). The suite fakes bo
 - **No authentication.** Anyone who can reach the API can read any transcript by ID (IDs are random 128-bit values). Don't expose it publicly as-is.
 - **Summaries are synchronous.** Very long transcripts make many Groq calls in one request and may hit free-tier token limits (you'll get a clear `429`).
 - **CPU transcription is slow** for long recordings with larger models; `base` is a speed/accuracy compromise.
-- **YouTube access is best-effort.** YouTube changes often, so keep `yt-dlp` updated (`pip install -U "yt-dlp[default]"`). Servers may be rate-limited or asked for a bot check; set `YTDLP_COOKIES_FILE` if that happens. Private, members-only, region-locked and live videos aren't supported. Only process videos you have the right to use, and respect YouTube's Terms of Service.
+- **YouTube access is best-effort.** YouTube changes often, so keep `yt-dlp` updated (`pip install -U "yt-dlp[default]"`). Servers may be rate-limited or asked for a bot check; set `SUPADATA_API_KEY` (recommended on cloud hosts) or `YTDLP_COOKIES_FILE` if that happens. Supadata results aren't cached, so transcribing the same video again uses credits again. With Supadata, the video title may be missing on cloud hosts, because the title is still looked up with yt-dlp. Private, members-only, region-locked and live videos aren't supported. Only process videos you have the right to use, and respect YouTube's Terms of Service.
 - **No speaker diarization**, so action-item owners depend on names being spoken.
 - The owner/deadline guard is literal-match based. It may drop a correct but paraphrased deadline; it never adds one.
 - PyAV is pinned to 18.x because faster-whisper 1.2.1 uses an argument that PyAV 19 removed.
@@ -405,5 +447,6 @@ Run them as shown in [Running the tests](#running-the-tests). The suite fakes bo
 - Authentication and per-user ownership of transcripts
 - Speaker diarization and word-level timestamps
 - Streaming progress (SSE/WebSocket) instead of polling
-- Docker image and production deployment guide
+- Docker image
+- Cache YouTube transcripts by video ID to avoid repeat Supadata calls
 - A React/Next.js frontend using the same API
