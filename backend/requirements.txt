@@ -9,7 +9,7 @@ av==18.1.0
 groq==1.7.0
 yt-dlp[default]==2026.8.19          # YouTube audio download (update often: YouTube changes frequently)
 youtube-transcript-api==1.2.4       # YouTube caption tracks
+httpx==0.28.1                       # Supadata transcript API (optional SUPADATA_API_KEY)
 
 # Testing
 pytest==9.1.1
-httpx==0.28.1

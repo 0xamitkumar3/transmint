@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -57,6 +58,12 @@ class Settings(BaseSettings):
     ytdlp_js_runtimes: str = "deno,node,bun"
     # Optional Netscape cookies.txt for videos that need sign-in / bot checks.
     ytdlp_cookies_file: Path | None = None
+    # Optional Supadata API key (https://supadata.ai). Fetches captions via Supadata's
+    # servers, which works on cloud hosts where YouTube blocks the server's IP.
+    supadata_api_key: str | None = None
+    # "native" = existing captions only; "auto" = also AI-generate when there are none
+    # (uses more Supadata credits); "generate" = always AI-generate.
+    supadata_mode: Literal["native", "auto", "generate"] = "native"
 
     # --- Summarization (Groq) ----------------------------------------------
     groq_api_key: str | None = None
@@ -71,7 +78,7 @@ class Settings(BaseSettings):
     # --- Basic abuse protection ---------------------------------------------
     rate_limit_per_minute: int = Field(default=20, ge=0)  # 0 disables the limiter
 
-    @field_validator("whisper_language", "groq_api_key", mode="before")
+    @field_validator("whisper_language", "groq_api_key", "supadata_api_key", mode="before")
     @classmethod
     def _blank_to_none(cls, value: str | None) -> str | None:
         if isinstance(value, str) and (not value.strip() or value.strip().startswith("your-")):

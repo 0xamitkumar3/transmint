@@ -204,7 +204,7 @@ pytest
 | **"Groq model '…' is not available"** | Groq retired that model. Set `GROQ_MODEL` in `backend/.env` to a current one from <https://console.groq.com/docs/models> (default: `openai/gpt-oss-120b`) and restart. |
 | **"Groq rate limit reached"** (429) | The free-tier limit was hit. Wait a minute and try again. |
 | First transcription is slow or fails offline | The Whisper model downloads on first use and needs internet once. |
-| YouTube: **"asking for a sign-in/bot check"** | Export your browser's YouTube cookies to `cookies.txt` and set `YTDLP_COOKIES_FILE=/path/to/cookies.txt` in `backend/.env`, then restart. |
+| YouTube: **"asking for a sign-in/bot check"** | Export your browser's YouTube cookies to `cookies.txt` and set `YTDLP_COOKIES_FILE=/path/to/cookies.txt` in `backend/.env`, then restart. On cloud hosts (Render etc.), set `SUPADATA_API_KEY` instead so captions are fetched via Supadata. |
 | YouTube downloads fail after a while | YouTube changed something. Run `pip install -U "yt-dlp[default]"` in the backend venv and restart. Installing Deno also helps. |
 | `pip install` fails building packages | You're probably on Python 3.14. Recreate the venv with `python3.12 -m venv .venv`. |
 
@@ -227,6 +227,8 @@ All settings are environment variables, read from `backend/.env`. See [`backend/
 | `YOUTUBE_MAX_DURATION_MINUTES` / `YOUTUBE_MAX_DOWNLOAD_MB` | `180` / `500` | Limits for audio downloads |
 | `YTDLP_JS_RUNTIMES` | `deno,node,bun` | JS runtimes yt-dlp may use |
 | `YTDLP_COOKIES_FILE` | *(none)* | Optional `cookies.txt` if YouTube asks for a sign-in/bot check |
+| `SUPADATA_API_KEY` | *(none)* | Optional [Supadata](https://supadata.ai) key. Captions are fetched through Supadata, which works on cloud hosts where YouTube blocks the server |
+| `SUPADATA_MODE` | `native` | `native` = existing captions only; `auto` = AI-generate when a video has none (uses more credits); `generate` = always AI-generate |
 | `MAX_CONCURRENT_TRANSCRIPTIONS` | `1` | Worker threads for transcription |
 | `SUMMARY_CHUNK_CHARS` | `12000` | Chunk size for hierarchical summarization |
 | `MAX_TRANSCRIPT_CHARS` | `400000` | Longest transcript accepted for summarization |

@@ -63,6 +63,8 @@ def build_services(
             download_timeout_seconds=settings.youtube_download_timeout_seconds,
             js_runtimes=settings.ytdlp_js_runtime_list,
             cookies_file=settings.ytdlp_cookies_file,
+            supadata_api_key=settings.supadata_api_key,
+            supadata_mode=settings.supadata_mode,
         )
     llm = llm or GroqClient(
         settings.groq_api_key,

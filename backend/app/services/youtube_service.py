@@ -3,6 +3,8 @@
 No YouTube API key is involved. The official Data API cannot download captions or
 media for videos you don't own, so Transmint uses:
 
+* the Supadata transcript API, when `SUPADATA_API_KEY` is set. It fetches captions from
+  Supadata's servers, so it works where YouTube blocks this server's IP (cloud hosts),
 * `youtube-transcript-api` to read caption tracks (fast, no audio download), and
 * `yt-dlp` to download the audio-only stream when captions are unavailable.
 
@@ -19,6 +21,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
+
 from app.core.errors import DependencyUnavailableError, YouTubeError
 from app.schemas.transcription import TranscriptionResult, TranscriptSegment, TranscriptSource
 from app.utils.youtube_url import canonical_watch_url
@@ -27,6 +31,11 @@ logger = logging.getLogger(__name__)
 
 # Caption lines that carry no speech, e.g. "[Music]" or "(applause)".
 NOISE_RE = re.compile(r"^\s*[\[(][^\])]{1,30}[\])]\s*$")
+
+SUPADATA_BASE_URL = "https://api.supadata.ai/v1"
+# Long videos are processed as an async job; how long to poll it before giving up.
+SUPADATA_JOB_TIMEOUT_SECONDS = 180
+SUPADATA_POLL_INTERVAL_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -47,6 +56,9 @@ class YouTubeService:
         download_timeout_seconds: int = 600,
         js_runtimes: list[str] | None = None,
         cookies_file: Path | None = None,
+        supadata_api_key: str | None = None,
+        supadata_mode: str = "native",
+        supadata_client: httpx.Client | None = None,  # injected by tests
     ) -> None:
         self.caption_languages = caption_languages or ["en"]
         self.max_duration_seconds = max_duration_seconds
@@ -54,6 +66,9 @@ class YouTubeService:
         self.download_timeout_seconds = download_timeout_seconds
         self.js_runtimes = js_runtimes or []
         self.cookies_file = cookies_file
+        self.supadata_api_key = supadata_api_key
+        self.supadata_mode = supadata_mode
+        self._supadata_client = supadata_client
 
     # --- availability ------------------------------------------------------
 
@@ -76,11 +91,16 @@ class YouTubeService:
     def fetch_captions(self, video_id: str) -> TranscriptionResult | None:
         """Return the video's captions as a transcript, or None if there are none usable.
 
-        Prefers manually created tracks in the configured languages, then auto-generated
-        ones, then any available track. Raises `YouTubeError` only if the video itself is
-        unavailable; every other caption problem returns None so the caller can fall back
-        to downloading audio.
+        Tries Supadata first when an API key is configured. Otherwise (or if Supadata has
+        nothing) prefers manually created tracks in the configured languages, then
+        auto-generated ones, then any available track. Raises `YouTubeError` only if the
+        video itself is unavailable; every other caption problem returns None so the
+        caller can fall back to downloading audio.
         """
+        if self.supadata_api_key:
+            result = self.fetch_supadata_captions(video_id)
+            if result is not None:
+                return result
         if not self.captions_supported():
             return None
         import youtube_transcript_api as yta
@@ -100,23 +120,66 @@ class YouTubeService:
             logger.info("Could not fetch captions for %s (%s); will download audio", video_id, type(exc).__name__)
             return None
 
-        segments = []
-        for snippet in fetched.snippets:
-            text = html.unescape(snippet.text).replace("\n", " ").strip()
-            if not text or NOISE_RE.match(text):
-                continue
-            start = max(0.0, float(snippet.start))
-            segments.append(TranscriptSegment(start=round(start, 2), end=round(start + float(snippet.duration), 2), text=text))
-        if not segments:
-            return None
-        return TranscriptionResult(
-            text=" ".join(s.text for s in segments),
-            language=fetched.language_code,
-            duration_seconds=segments[-1].end,
-            segments=segments,
-            transcript_source=TranscriptSource.YOUTUBE_AUTO_CAPTIONS if fetched.is_generated
-            else TranscriptSource.YOUTUBE_CAPTIONS,
+        return _build_caption_result(
+            [(s.text, float(s.start), float(s.duration)) for s in fetched.snippets],
+            fetched.language_code,
+            TranscriptSource.YOUTUBE_AUTO_CAPTIONS if fetched.is_generated else TranscriptSource.YOUTUBE_CAPTIONS,
         )
+
+    def fetch_supadata_captions(self, video_id: str) -> TranscriptionResult | None:
+        """Fetch the transcript through Supadata. Returns None on any failure so callers fall back."""
+        client = self._supadata_client or httpx.Client(timeout=60)
+        try:
+            body = self._supadata_request(client, video_id)
+        except Exception as exc:  # noqa: BLE001 - network errors, bad responses, timeouts...
+            logger.warning("Supadata request failed for %s (%s)", video_id, type(exc).__name__)
+            return None
+        finally:
+            if client is not self._supadata_client:
+                client.close()
+        if body is None:
+            return None
+
+        content = body.get("content")
+        if not isinstance(content, list):
+            logger.warning("Supadata returned an unexpected transcript format for %s", video_id)
+            return None
+        # Offsets and durations are in milliseconds. Supadata doesn't say whether
+        # the track is manual or auto-generated, so it is reported as captions.
+        snippets = [
+            (str(c.get("text", "")), float(c.get("offset") or 0) / 1000, float(c.get("duration") or 0) / 1000)
+            for c in content if isinstance(c, dict)
+        ]
+        return _build_caption_result(snippets, body.get("lang"), TranscriptSource.YOUTUBE_CAPTIONS)
+
+    def _supadata_request(self, client: httpx.Client, video_id: str) -> dict | None:
+        """Call the transcript endpoint, polling the async job for long videos. None = no transcript."""
+        headers = {"x-api-key": self.supadata_api_key or ""}
+        params = {"url": canonical_watch_url(video_id), "mode": self.supadata_mode, "lang": self.caption_languages[0]}
+        resp = client.get(f"{SUPADATA_BASE_URL}/transcript", params=params, headers=headers)
+        if resp.status_code == 202:
+            job_id = resp.json().get("jobId")
+            if not job_id:
+                return _supadata_failure(video_id, resp)
+            deadline = time.monotonic() + SUPADATA_JOB_TIMEOUT_SECONDS
+            while True:
+                resp = client.get(f"{SUPADATA_BASE_URL}/transcript/{job_id}", headers=headers)
+                if resp.status_code != 200:
+                    return _supadata_failure(video_id, resp)
+                body = resp.json()
+                status = body.get("status")
+                if status == "completed":
+                    return body
+                if status == "failed":
+                    logger.info("Supadata job for %s failed: %s", video_id, body.get("error"))
+                    return None
+                if time.monotonic() > deadline:
+                    logger.warning("Supadata job for %s timed out", video_id)
+                    return None
+                time.sleep(SUPADATA_POLL_INTERVAL_SECONDS)
+        if resp.status_code != 200:
+            return _supadata_failure(video_id, resp)
+        return resp.json()
 
     def _choose_track(self, track_list, not_found_exc):  # noqa: ANN001, ANN202
         for finder in (track_list.find_manually_created_transcript, track_list.find_generated_transcript):
@@ -220,6 +283,38 @@ class YouTubeService:
     def _remove_partials(dest_dir: Path, file_id: str) -> None:
         for leftover in dest_dir.glob(f"{file_id}.*"):
             leftover.unlink(missing_ok=True)
+
+
+def _build_caption_result(
+    snippets: list[tuple[str, float, float]], language: str | None, source: TranscriptSource
+) -> TranscriptionResult | None:
+    """Turn (text, start, duration) caption lines into a transcript, dropping noise like "[Music]"."""
+    segments = []
+    for raw_text, start, duration in snippets:
+        text = html.unescape(raw_text).replace("\n", " ").strip()
+        if not text or NOISE_RE.match(text):
+            continue
+        start = max(0.0, start)
+        segments.append(TranscriptSegment(start=round(start, 2), end=round(start + duration, 2), text=text))
+    if not segments:
+        return None
+    return TranscriptionResult(
+        text=" ".join(s.text for s in segments),
+        language=language,
+        duration_seconds=segments[-1].end,
+        segments=segments,
+        transcript_source=source,
+    )
+
+
+def _supadata_failure(video_id: str, resp: httpx.Response) -> None:
+    """Log a failed Supadata response. Bad keys and exhausted quotas are logged as warnings."""
+    try:
+        code = resp.json().get("error")
+    except ValueError:
+        code = None
+    level = logging.WARNING if resp.status_code in {401, 403, 429} else logging.INFO
+    logger.log(level, "Supadata returned HTTP %s (%s) for %s", resp.status_code, code, video_id)
 
 
 class _YtDlpLogger:
